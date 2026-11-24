@@ -80,7 +80,11 @@ process_session() {
 			continue
 		fi
 		k16="$dir/$s.16k.wav"
-		ffmpeg -nostdin -loglevel error -y -i "$wav" -ar 16000 -ac 1 "$k16" || die "ffmpeg failed on $wav"
+		if ! ffmpeg -nostdin -loglevel error -y -i "$wav" -ar 16000 -ac 1 "$k16"; then
+			printf 'callscribe: warning: %s stream audio is unreadable; skipping it\n' "$s" >&2
+			printf '{"transcription":[]}\n' >"$dir/$s.json"
+			continue
+		fi
 		mean=$(ffmpeg -nostdin -i "$wav" -af volumedetect -f null - 2>&1 |
 			sed -n 's/.*mean_volume: \(-\{0,1\}[0-9.]*\) dB.*/\1/p')
 		if [ -z "$mean" ] || [ "$(awk -v m="$mean" -v t="$CALLSCRIBE_SILENCE_DB" 'BEGIN{print (m < t) ? 1 : 0}')" = 1 ]; then

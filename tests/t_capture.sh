@@ -8,7 +8,10 @@ tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 export CALLSCRIBE_STATE_DIR="$tmp/state"
 export XDG_CONFIG_HOME="$tmp/config"
+export CALLSCRIBE_OUT_DIR="$tmp/out"
+export CALLSCRIBE_MODEL="$tmp/model.bin"
 export STUB_LOG="$tmp/stub.log"
+: >"$CALLSCRIBE_MODEL"
 PATH="$PWD/tests/stubs:$PATH"
 export PATH
 
@@ -45,7 +48,7 @@ assert_exit 0 "stop exits 0"
 grep -q '^ENDED_EPOCH=' "$dir/meta" && printf 'ok: meta has ENDED_EPOCH\n' || fail "meta lacks ENDED_EPOCH"
 kill -0 "$MIC_PID" 2>/dev/null && fail "mic recorder survived stop" || printf 'ok: mic recorder gone\n'
 kill -0 "$SYS_PID" 2>/dev/null && fail "system recorder survived stop" || printf 'ok: system recorder gone\n'
-assert_contains "$dir" "stop invoked process_session with the session dir"
+assert_contains -call.md "stop ran processing and reported a transcript path"
 
 run "$CS" stop
 assert_exit 1 "stop with no session exits 1"
@@ -63,6 +66,7 @@ while kill -0 "$SYS_PID" 2>/dev/null; do sleep 0.1; done
 run "$CS" stop
 assert_exit 0 "stop after a dead recorder exits 0"
 assert_contains "system recorder" "stop warns about the dead system recorder"
+assert_contains -call.md "degraded stop still reports a transcript path"
 [ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: current removed after degraded stop\n' || fail "current still present after degraded stop"
 
 finish
