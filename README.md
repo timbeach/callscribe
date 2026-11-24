@@ -69,7 +69,7 @@ Environment variables with the same names override it.
 | `CALLSCRIBE_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
 | `CALLSCRIBE_LANG` | `en` | transcription language |
 | `CALLSCRIBE_SILENCE_DB` | `-50` | mean volume below this warns of a silent stream |
-| `CALLSCRIBE_WHISPER_FLAGS` | empty | extra whisper-cli flags, e.g. `-tt 8` for 8 threads |
+| `CALLSCRIBE_WHISPER_FLAGS` | empty | extra whisper-cli flags, e.g. `-t 8` for 8 threads |
 | `CALLSCRIBE_CLAUDE_BIN` | `claude` | CLI used by `summarize` |
 
 Raw audio and working files live under `~/.local/state/callscribe/sessions/`
@@ -80,6 +80,21 @@ bigger model at any time.
 
 See `contrib/` for a keybinding snippet (one key toggles recording) and a
 dwmblocks module that shows a recording indicator.
+
+## Benchmarks
+
+Measured on an i7 laptop CPU (4 cores, 8 threads), processing both streams
+of a 29 second call (58 seconds of audio total):
+
+| Model | Wall time | Rough cost per call hour |
+|---|---|---|
+| ggml-small (default) | 18s (0.6x call length) | about 37 min |
+| ggml-medium | 47s (1.6x call length) | about 97 min |
+
+Adding `-t 8` was not faster than the default 4 threads on this CPU
+(hyperthread contention). On clean call audio, medium's output was not
+meaningfully better than small's; point `CALLSCRIBE_MODEL` at medium per
+run for calls that deserve the extra accuracy.
 
 ## Known limitations
 
