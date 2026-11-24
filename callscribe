@@ -1,0 +1,62 @@
+#!/bin/sh
+# callscribe: record both sides of a call on PipeWire, transcribe locally,
+# write one You/Them Markdown transcript. MIT licensed.
+
+usage() {
+	cat >&2 <<'EOF'
+usage: callscribe <command>
+
+commands:
+  start        begin recording mic and system audio
+  stop         end recording and produce the transcript
+  toggle       start if idle, stop if recording
+  status       show whether a recording is running
+  transcribe   rerun processing on a finished session
+  setup        install whisper.cpp and download a model
+  clean        delete raw audio from finished sessions
+  summarize    pipe a transcript into the claude CLI
+EOF
+	exit 1
+}
+
+die() {
+	printf 'callscribe: %s\n' "$*" >&2
+	exit 1
+}
+
+load_config() {
+	cfg="${XDG_CONFIG_HOME:-$HOME/.config}/callscribe/config"
+	# shellcheck disable=SC1090
+	[ -r "$cfg" ] && . "$cfg"
+	: "${CALLSCRIBE_OUT_DIR:=$HOME/Documents/PERSONAL/meetings}"
+	: "${CALLSCRIBE_MODEL:=$HOME/.local/share/callscribe/models/ggml-small.bin}"
+	: "${CALLSCRIBE_WHISPER_BIN:=whisper-cli}"
+	: "${CALLSCRIBE_LANG:=en}"
+	: "${CALLSCRIBE_SILENCE_DB:=-50}"
+}
+
+state_dir() {
+	printf '%s\n' "${CALLSCRIBE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/callscribe}"
+}
+
+cmd_status() {
+	sd=$(state_dir)
+	if [ -f "$sd/current" ]; then
+		echo recording
+	else
+		echo idle
+	fi
+}
+
+main() {
+	[ $# -ge 1 ] || usage
+	cmd=$1
+	shift
+	load_config
+	case "$cmd" in
+	status) cmd_status "$@" ;;
+	*) usage ;;
+	esac
+}
+
+main "$@"
