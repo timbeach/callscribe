@@ -1,0 +1,17 @@
+#!/bin/sh
+# Test stub for whisper-cli: writes canned -oj JSON named after the input stream.
+[ -n "$STUB_LOG" ] && printf 'whisper-cli %s\n' "$*" >>"$STUB_LOG"
+in='' of=''
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-f) in=$2; shift 2 ;;
+	-of) of=$2; shift 2 ;;
+	*) shift ;;
+	esac
+done
+[ -n "$in" ] && [ -n "$of" ] || exit 1
+case "$(basename "$in")" in
+mic*) text="canned you line" ;;
+*) text="canned them line" ;;
+esac
+printf '{"transcription":[{"offsets":{"from":1000,"to":2000},"text":" %s"}]}\n' "$text" >"$of.json"

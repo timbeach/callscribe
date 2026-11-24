@@ -52,9 +52,73 @@ cmd_status() {
 	fi
 }
 
-# Placeholder until the processing pipeline task: echoes the session dir.
+merge_bin() {
+	m=$(dirname "$0")/callscribe-merge
+	if [ -x "$m" ]; then
+		printf '%s\n' "$m"
+	else
+		command -v callscribe-merge || die "callscribe-merge not found next to callscribe or on PATH"
+	fi
+}
+
+# process_session DIR: resample, silence-check, transcribe, and merge one session
+# into a Markdown transcript in CALLSCRIBE_OUT_DIR. Prints the output path.
 process_session() {
-	printf 'process %s\n' "$1"
+	dir=$1
+	command -v "$CALLSCRIBE_WHISPER_BIN" >/dev/null 2>&1 ||
+		die "whisper binary '$CALLSCRIBE_WHISPER_BIN' not found; set CALLSCRIBE_WHISPER_BIN or run callscribe setup"
+	[ -f "$CALLSCRIBE_MODEL" ] ||
+		die "model '$CALLSCRIBE_MODEL' not found; set CALLSCRIBE_MODEL or run callscribe setup"
+	SESSION='' STARTED_EPOCH=0 ENDED_EPOCH='' MIC_DEV='' SYS_DEV=''
+	# shellcheck disable=SC1090
+	. "$dir/meta"
+	for s in mic sys; do
+		wav="$dir/$s.wav"
+		if [ ! -f "$wav" ]; then
+			printf 'callscribe: warning: %s stream has no audio; transcript will be one-sided\n' "$s" >&2
+			printf '{"transcription":[]}\n' >"$dir/$s.json"
+			continue
+		fi
+		k16="$dir/$s.16k.wav"
+		ffmpeg -nostdin -loglevel error -y -i "$wav" -ar 16000 -ac 1 "$k16" || die "ffmpeg failed on $wav"
+		mean=$(ffmpeg -nostdin -i "$wav" -af volumedetect -f null - 2>&1 |
+			sed -n 's/.*mean_volume: \(-\{0,1\}[0-9.]*\) dB.*/\1/p')
+		if [ -z "$mean" ] || [ "$(awk -v m="$mean" -v t="$CALLSCRIBE_SILENCE_DB" 'BEGIN{print (m < t) ? 1 : 0}')" = 1 ]; then
+			printf 'callscribe: WARNING: %s stream is silent (mean volume %s dB); check your audio routing\n' \
+				"$s" "${mean:-unknown}" >&2
+		fi
+		"$CALLSCRIBE_WHISPER_BIN" -m "$CALLSCRIBE_MODEL" -l "$CALLSCRIBE_LANG" \
+			-f "$k16" -oj -of "$dir/$s" >>"$dir/whisper.log" 2>&1 ||
+			die "whisper failed on $s stream (see $dir/whisper.log)"
+		[ -f "$dir/$s.json" ] || die "whisper produced no JSON for $s stream (see $dir/whisper.log)"
+	done
+	body="$dir/transcript.md"
+	"$(merge_bin)" "$dir/mic.json" "$dir/sys.json" >"$body" || die "transcript merge failed"
+	mkdir -p "$CALLSCRIBE_OUT_DIR" || die "cannot create $CALLSCRIBE_OUT_DIR"
+	end=${ENDED_EPOCH:-$(date +%s)}
+	out="$CALLSCRIBE_OUT_DIR/$(date -d "@$STARTED_EPOCH" +%Y-%m-%d-%H%M)-call.md"
+	{
+		printf -- '---\n'
+		printf 'date: %s\n' "$(date -d "@$STARTED_EPOCH" +%Y-%m-%d)"
+		printf 'start: %s\n' "$(date -d "@$STARTED_EPOCH" +%H:%M)"
+		printf 'duration_seconds: %s\n' "$((end - STARTED_EPOCH))"
+		printf 'mic_device: %s\n' "$MIC_DEV"
+		printf 'sys_device: %s\n' "$SYS_DEV"
+		printf -- '---\n\n'
+		cat "$body"
+	} >"$out"
+	printf '%s\n' "$out"
+}
+
+cmd_transcribe() {
+	[ $# -eq 1 ] || die "usage: callscribe transcribe <session-id>"
+	sd=$(state_dir)
+	dir="$sd/sessions/$1"
+	[ -d "$dir" ] || die "no such session: $1"
+	if [ -f "$sd/current" ] && [ "$(cat "$sd/current")" = "$1" ]; then
+		die "session $1 is still recording; run callscribe stop"
+	fi
+	process_session "$dir"
 }
 
 cmd_start() {
@@ -124,6 +188,7 @@ main() {
 	start) cmd_start "$@" ;;
 	stop) cmd_stop "$@" ;;
 	status) cmd_status "$@" ;;
+	transcribe) cmd_transcribe "$@" ;;
 	*) usage ;;
 	esac
 }
