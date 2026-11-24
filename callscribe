@@ -184,6 +184,15 @@ cmd_stop() {
 	process_session "$dir"
 }
 
+cmd_toggle() {
+	sd=$(state_dir)
+	if [ -f "$sd/current" ]; then
+		cmd_stop
+	else
+		cmd_start
+	fi
+}
+
 cmd_clean() {
 	sd=$(state_dir)
 	cur=''
@@ -263,6 +272,7 @@ main() {
 	case "$cmd" in
 	start) cmd_start "$@" ;;
 	stop) cmd_stop "$@" ;;
+	toggle) cmd_toggle "$@" ;;
 	status) cmd_status "$@" ;;
 	transcribe) cmd_transcribe "$@" ;;
 	setup) cmd_setup "$@" ;;

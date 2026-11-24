@@ -69,4 +69,13 @@ assert_contains "system recorder" "stop warns about the dead system recorder"
 assert_contains -call.md "degraded stop still reports a transcript path"
 [ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: current removed after degraded stop\n' || fail "current still present after degraded stop"
 
+# toggle: starts when idle, stops when recording.
+sleep 1
+run "$CS" toggle
+assert_exit 0 "toggle starts when idle"
+[ -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: toggle started a session\n' || fail "toggle did not start a session"
+run "$CS" toggle
+assert_exit 0 "toggle stops when recording"
+[ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: toggle stopped the session\n' || fail "toggle did not stop the session"
+
 finish
