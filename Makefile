@@ -9,6 +9,8 @@ test:
 		echo "== $$t"; \
 		sh "$$t" || fail=1; \
 	done; \
+	echo "== python unit tests"; \
+	python3 -m unittest discover -s tests || fail=1; \
 	exit $$fail
 
 install:

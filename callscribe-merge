@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Interleave two whisper.cpp -oj JSON transcripts into You/Them Markdown lines.
+
+Usage: callscribe-merge YOU.json THEM.json
+"""
+
+import json
+import sys
+
+
+def load_segments(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as err:
+        sys.stderr.write(f"callscribe-merge: {path}: {err}\n")
+        sys.exit(1)
+    return data.get("transcription") or []
+
+
+def fmt(ms):
+    total = ms // 1000
+    return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.stderr.write("usage: callscribe-merge YOU.json THEM.json\n")
+        sys.exit(1)
+    rows = []
+    for order, (path, who) in enumerate(((sys.argv[1], "You"), (sys.argv[2], "Them"))):
+        for segment in load_segments(path):
+            text = (segment.get("text") or "").strip()
+            if not text:
+                continue
+            rows.append((segment["offsets"]["from"], order, who, text))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    for start, _, who, text in rows:
+        print(f"**[{fmt(start)}] {who}:** {text}")
+
+
+if __name__ == "__main__":
+    main()
