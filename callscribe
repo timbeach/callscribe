@@ -178,13 +178,14 @@ cmd_start() {
 		printf 'MIC_DEV=%s\n' "$mic_dev"
 		printf 'SYS_DEV=%s\n' "$sys_dev"
 	} >"$dir/meta"
-	# node.dont-fallback makes a missing target fail instead of silently
-	# recording some other device; stream.capture.sink captures the sink's
-	# monitor (a literal "<sink>.monitor" target is a pulse-only name that
-	# WirePlumber does not resolve).
-	pw-record -P node.dont-fallback=true --target "$mic_dev" "$dir/mic.wav" >>"$dir/record.log" 2>&1 &
+	# stream.capture.sink captures the sink's monitor (a literal
+	# "<sink>.monitor" target is a pulse-only name WirePlumber does not
+	# resolve). node.dont-fallback is deliberately absent: on PipeWire
+	# 1.6 it breaks the by-name target lookup itself. The printed device
+	# names and the silence check at stop guard against a wrong target.
+	pw-record --target "$mic_dev" "$dir/mic.wav" >>"$dir/record.log" 2>&1 &
 	mic_pid=$!
-	pw-record -P stream.capture.sink=true -P node.dont-fallback=true --target "$sys_dev" "$dir/sys.wav" >>"$dir/record.log" 2>&1 &
+	pw-record -P stream.capture.sink=true --target "$sys_dev" "$dir/sys.wav" >>"$dir/record.log" 2>&1 &
 	sys_pid=$!
 	sleep 0.3
 	for p in "$mic_pid mic" "$sys_pid system"; do

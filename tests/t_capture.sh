@@ -22,9 +22,9 @@ assert_contains "fake.sink (monitor)" "start prints the monitor target"
 grep -q 'pw-record .*stream\.capture\.sink=true.*--target fake\.sink .*sys\.wav' "$STUB_LOG" &&
 	printf 'ok: sys capture targets the sink with stream.capture.sink\n' ||
 	fail "sys pw-record not invoked with stream.capture.sink=true against the sink"
-grep -q 'pw-record .*node\.dont-fallback=true.*--target fake\.mic .*mic\.wav' "$STUB_LOG" &&
-	printf 'ok: mic capture refuses fallback targets\n' ||
-	fail "mic pw-record not invoked with node.dont-fallback=true"
+grep -q 'pw-record --target fake\.mic .*mic\.wav' "$STUB_LOG" &&
+	printf 'ok: mic capture targets the source directly\n' ||
+	fail "mic pw-record not invoked with a plain --target"
 grep -q 'pw-record .*fake\.sink\.monitor' "$STUB_LOG" &&
 	fail "sys pw-record still targets the fake pulse .monitor name" ||
 	printf 'ok: no .monitor pseudo-target used\n'
