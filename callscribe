@@ -42,10 +42,77 @@ state_dir() {
 cmd_status() {
 	sd=$(state_dir)
 	if [ -f "$sd/current" ]; then
-		echo recording
+		session=$(cat "$sd/current")
+		STARTED_EPOCH=0
+		# shellcheck disable=SC1090
+		. "$sd/sessions/$session/meta"
+		printf 'recording %s %ss\n' "$session" "$(($(date +%s) - STARTED_EPOCH))"
 	else
 		echo idle
 	fi
+}
+
+# Placeholder until the processing pipeline task: echoes the session dir.
+process_session() {
+	printf 'process %s\n' "$1"
+}
+
+cmd_start() {
+	sd=$(state_dir)
+	[ -f "$sd/current" ] && die "already recording session $(cat "$sd/current"); run callscribe stop first"
+	mic_dev=$(pactl get-default-source) || die "cannot read default source: is PipeWire running?"
+	sys_dev=$(pactl get-default-sink) || die "cannot read default sink: is PipeWire running?"
+	session=$(date +%Y%m%d-%H%M%S)
+	dir="$sd/sessions/$session"
+	while [ -e "$dir" ]; do
+		session="${session}x"
+		dir="$sd/sessions/$session"
+	done
+	mkdir -p "$dir" || die "cannot create $dir"
+	{
+		printf 'SESSION=%s\n' "$session"
+		printf 'STARTED_EPOCH=%s\n' "$(date +%s)"
+		printf 'MIC_DEV=%s\n' "$mic_dev"
+		printf 'SYS_DEV=%s\n' "$sys_dev"
+	} >"$dir/meta"
+	pw-record --target "$mic_dev" "$dir/mic.wav" >>"$dir/record.log" 2>&1 &
+	mic_pid=$!
+	pw-record --target "$sys_dev.monitor" "$dir/sys.wav" >>"$dir/record.log" 2>&1 &
+	sys_pid=$!
+	{
+		printf 'MIC_PID=%s\n' "$mic_pid"
+		printf 'SYS_PID=%s\n' "$sys_pid"
+	} >"$dir/pids"
+	printf '%s\n' "$session" >"$sd/current"
+	printf 'recording %s\n  you:  %s\n  them: %s.monitor\n' "$session" "$mic_dev" "$sys_dev"
+}
+
+# stop_recorder PID LABEL: terminate a recorder, warning if it already died.
+stop_recorder() {
+	if kill -0 "$1" 2>/dev/null; then
+		kill -TERM "$1" 2>/dev/null
+		while kill -0 "$1" 2>/dev/null; do sleep 0.1; done
+	else
+		printf 'callscribe: warning: %s recorder was not running at stop\n' "$2" >&2
+	fi
+}
+
+cmd_stop() {
+	sd=$(state_dir)
+	[ -f "$sd/current" ] || die "no recording in progress"
+	session=$(cat "$sd/current")
+	dir="$sd/sessions/$session"
+	MIC_PID='' SYS_PID=''
+	# shellcheck disable=SC1090
+	[ -f "$dir/pids" ] && . "$dir/pids"
+	stop_recorder "$MIC_PID" mic
+	stop_recorder "$SYS_PID" system
+	printf 'ENDED_EPOCH=%s\n' "$(date +%s)" >>"$dir/meta"
+	rm -f "$sd/current"
+	for f in mic sys; do
+		[ -f "$dir/$f.wav" ] || printf 'callscribe: warning: %s stream has no audio file\n' "$f" >&2
+	done
+	process_session "$dir"
 }
 
 main() {
@@ -54,6 +121,8 @@ main() {
 	shift
 	load_config
 	case "$cmd" in
+	start) cmd_start "$@" ;;
+	stop) cmd_stop "$@" ;;
 	status) cmd_status "$@" ;;
 	*) usage ;;
 	esac

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Test stub for pw-record: logs the invocation, creates the output file,
+# then idles until SIGTERM like a real recorder.
+[ -n "$STUB_LOG" ] && printf 'pw-record %s\n' "$*" >>"$STUB_LOG"
+for last; do :; done
+touch "$last"
+sleep 600 &
+child=$!
+trap 'kill "$child" 2>/dev/null; exit 0' TERM INT
+wait "$child"

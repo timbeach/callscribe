@@ -1,0 +1,8 @@
+#!/bin/sh
+# Test stub for pactl: fixed fake device names.
+[ -n "$STUB_LOG" ] && printf 'pactl %s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+get-default-source) echo fake.mic ;;
+get-default-sink) echo fake.sink ;;
+*) exit 1 ;;
+esac
