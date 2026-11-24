@@ -14,3 +14,76 @@ headset.
 question before it is a technical one. callscribe records only when you start
 it, and you are responsible for complying with the recording laws of your
 jurisdiction and the policies of your workplace.
+
+## Dependencies
+
+- PipeWire with pipewire-pulse (`pw-record`, `pactl`)
+- ffmpeg
+- whisper.cpp (`whisper-cli`) and a ggml model: `callscribe setup` installs both
+- Python 3 (standard library only, for the transcript merge)
+- Optional: the `claude` CLI for `callscribe summarize`
+
+## Install
+
+```
+make install          # copies callscribe and callscribe-merge to ~/.local/bin
+callscribe setup      # builds whisper.cpp in ~/.local/src, downloads a model
+```
+
+## Usage
+
+```
+callscribe start      # prints which devices it is recording; check them
+callscribe status     # recording <session> <elapsed>s, or idle
+callscribe stop       # transcribes and prints the Markdown file path
+callscribe toggle     # start if idle, stop if recording (bind this to a key)
+callscribe transcribe <session-id>   # rerun processing on a finished session
+callscribe clean      # delete raw WAVs from finished sessions
+callscribe summarize <transcript.md> # pipe a transcript to the claude CLI
+```
+
+A transcript looks like:
+
+```
+---
+date: 2026-11-24
+start: 14:00
+duration_seconds: 1860
+mic_device: alsa_input.usb-...
+sys_device: alsa_output.usb-...
+---
+
+**[0:00:04] Them:** Can you hear me now?
+**[0:00:06] You:** Loud and clear.
+```
+
+## Configuration
+
+Optional file at `~/.config/callscribe/config`, plain shell assignments.
+Environment variables with the same names override it.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CALLSCRIBE_OUT_DIR` | `~/Documents/PERSONAL/meetings` | where transcripts land |
+| `CALLSCRIBE_MODEL` | `~/.local/share/callscribe/models/ggml-small.bin` | ggml model path |
+| `CALLSCRIBE_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
+| `CALLSCRIBE_LANG` | `en` | transcription language |
+| `CALLSCRIBE_SILENCE_DB` | `-50` | mean volume below this warns of a silent stream |
+| `CALLSCRIBE_CLAUDE_BIN` | `claude` | CLI used by `summarize` |
+
+Raw audio and working files live under `~/.local/state/callscribe/sessions/`
+until you run `callscribe clean`, so a call can be re-transcribed with a
+bigger model at any time.
+
+## dwm and dwmblocks
+
+See `contrib/` for a keybinding snippet (one key toggles recording) and a
+dwmblocks module that shows a recording indicator.
+
+## Known limitations
+
+- Changing the default audio device mid-call is not handled; the recording
+  follows the devices chosen at `callscribe start` (which it prints).
+- Far-end speakers are labeled Them collectively; telling two remote
+  speakers apart would need real diarization.
+- Live transcription is out of scope; processing happens after the call.

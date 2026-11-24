@@ -16,6 +16,7 @@ test:
 install:
 	mkdir -p $(BINDIR)
 	install -m 755 callscribe $(BINDIR)/callscribe
+	install -m 755 callscribe-merge $(BINDIR)/callscribe-merge
 
 uninstall:
-	rm -f $(BINDIR)/callscribe
+	rm -f $(BINDIR)/callscribe $(BINDIR)/callscribe-merge

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test stub for git: only logs, so tests can assert setup made no network calls.
+[ -n "$STUB_LOG" ] && printf 'git %s\n' "$*" >>"$STUB_LOG"
+exit 0

@@ -33,6 +33,7 @@ load_config() {
 	: "${CALLSCRIBE_WHISPER_BIN:=whisper-cli}"
 	: "${CALLSCRIBE_LANG:=en}"
 	: "${CALLSCRIBE_SILENCE_DB:=-50}"
+	: "${CALLSCRIBE_CLAUDE_BIN:=claude}"
 }
 
 state_dir() {
@@ -183,6 +184,77 @@ cmd_stop() {
 	process_session "$dir"
 }
 
+cmd_clean() {
+	sd=$(state_dir)
+	cur=''
+	[ -f "$sd/current" ] && cur=$(cat "$sd/current")
+	total=0
+	for d in "$sd/sessions"/*/; do
+		[ -d "$d" ] || continue
+		[ -n "$cur" ] && [ "$(basename "$d")" = "$cur" ] && continue
+		for w in "$d"*.wav; do
+			[ -f "$w" ] || continue
+			total=$((total + $(wc -c <"$w")))
+			rm -f "$w"
+		done
+	done
+	printf 'reclaimed %s KiB of raw audio\n' "$((total / 1024))"
+}
+
+cmd_summarize() {
+	[ $# -eq 1 ] || die "usage: callscribe summarize <transcript.md>"
+	[ -f "$1" ] || die "no such file: $1"
+	command -v "$CALLSCRIBE_CLAUDE_BIN" >/dev/null 2>&1 ||
+		die "claude CLI '$CALLSCRIBE_CLAUDE_BIN' not found; set CALLSCRIBE_CLAUDE_BIN"
+	"$CALLSCRIBE_CLAUDE_BIN" -p \
+		'Below is a transcript of a call I was on, labeled You (me) and Them. Write a short summary, the action items with owners, and drafts of any follow-up messages I should send.' \
+		<"$1"
+}
+
+# ask "question": returns 0 only on an explicit yes.
+ask() {
+	printf '%s [y/N] ' "$1"
+	read -r ans
+	case "$ans" in
+	y | Y | yes) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+cmd_setup() {
+	needed=0
+	if command -v "$CALLSCRIBE_WHISPER_BIN" >/dev/null 2>&1; then
+		printf 'whisper binary: %s (ok)\n' "$(command -v "$CALLSCRIBE_WHISPER_BIN")"
+	else
+		needed=1
+		src="$HOME/.local/src/whisper.cpp"
+		ask "whisper-cli is missing. Clone and build whisper.cpp in $src?" || die "setup aborted"
+		[ -d "$src" ] || git clone https://github.com/ggml-org/whisper.cpp "$src" || die "clone failed"
+		(cd "$src" && make -j "$(nproc)") || die "whisper.cpp build failed; see output above"
+		bin=''
+		for c in "$src/build/bin/whisper-cli" "$src/whisper-cli" "$src/main"; do
+			[ -x "$c" ] && bin=$c && break
+		done
+		[ -n "$bin" ] || die "built whisper.cpp but found no whisper-cli binary in $src"
+		mkdir -p "$HOME/.local/bin"
+		ln -sf "$bin" "$HOME/.local/bin/whisper-cli"
+		printf 'installed %s -> %s\n' "$HOME/.local/bin/whisper-cli" "$bin"
+	fi
+	if [ -f "$CALLSCRIBE_MODEL" ]; then
+		printf 'model: %s (ok)\n' "$CALLSCRIBE_MODEL"
+	else
+		needed=1
+		name=$(basename "$CALLSCRIBE_MODEL")
+		url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$name"
+		ask "Model $name is missing. Download it from $url to $CALLSCRIBE_MODEL?" || die "setup aborted"
+		mkdir -p "$(dirname "$CALLSCRIBE_MODEL")"
+		curl -L --fail -o "$CALLSCRIBE_MODEL" "$url" || die "model download failed"
+		printf 'downloaded %s\n' "$CALLSCRIBE_MODEL"
+	fi
+	[ "$needed" -eq 0 ] && printf 'nothing to do: whisper and model are already in place\n'
+	return 0
+}
+
 main() {
 	[ $# -ge 1 ] || usage
 	cmd=$1
@@ -193,6 +265,9 @@ main() {
 	stop) cmd_stop "$@" ;;
 	status) cmd_status "$@" ;;
 	transcribe) cmd_transcribe "$@" ;;
+	setup) cmd_setup "$@" ;;
+	clean) cmd_clean "$@" ;;
+	summarize) cmd_summarize "$@" ;;
 	*) usage ;;
 	esac
 }
