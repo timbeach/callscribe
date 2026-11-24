@@ -91,6 +91,10 @@ of a 29 second call (58 seconds of audio total):
 | ggml-small (default) | 18s (0.6x call length) | about 37 min |
 | ggml-medium | 47s (1.6x call length) | about 97 min |
 
+A second run with continuous speech on both streams came in at 1.3x call
+length, so expect something between 0.6x and 1.5x depending on how dense
+the talking is.
+
 Adding `-t 8` was not faster than the default 4 threads on this CPU
 (hyperthread contention). On clean call audio, medium's output was not
 meaningfully better than small's; point `CALLSCRIBE_MODEL` at medium per
