@@ -69,6 +69,7 @@ Environment variables with the same names override it.
 | `CALLSCRIBE_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
 | `CALLSCRIBE_LANG` | `en` | transcription language |
 | `CALLSCRIBE_SILENCE_DB` | `-50` | mean volume below this warns of a silent stream |
+| `CALLSCRIBE_WHISPER_FLAGS` | empty | extra whisper-cli flags, e.g. `-tt 8` for 8 threads |
 | `CALLSCRIBE_CLAUDE_BIN` | `claude` | CLI used by `summarize` |
 
 Raw audio and working files live under `~/.local/state/callscribe/sessions/`

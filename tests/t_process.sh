@@ -69,4 +69,31 @@ md2=$(find "$CALLSCRIBE_OUT_DIR" -name '*-call.md' | grep -v "$(basename "$md")"
 [ -n "$md2" ] && grep -q 'canned you line' "$md2" && printf 'ok: one-sided transcript has You line\n' || fail "one-sided transcript missing You line"
 grep -q 'canned them line' "$md2" && fail "one-sided transcript has phantom Them line" || printf 'ok: no phantom Them line\n'
 
+# Warnings must reach the transcript itself (frontmatter), not only stderr.
+grep -q '^warnings:' "$md" && printf 'ok: frontmatter has warnings list\n' || fail "frontmatter lacks warnings list"
+grep -q 'sys stream is silent' "$md" && printf 'ok: silence warning recorded in transcript\n' || fail "silence warning not in transcript"
+
+# Rerunning transcribe must not overwrite the existing transcript.
+run "$CS" transcribe "$s1"
+assert_exit 0 "rerun transcribe exits 0"
+n_md=$(find "$CALLSCRIBE_OUT_DIR" -name '*-call*.md' | wc -l)
+[ "$n_md" -ge 3 ] && printf 'ok: rerun wrote a new file instead of overwriting\n' || fail "rerun overwrote an existing transcript (files: $n_md)"
+
+# Environment variables must override the config file.
+mkdir -p "$XDG_CONFIG_HOME/callscribe"
+printf 'CALLSCRIBE_OUT_DIR=%s/wrong\n' "$tmp" >"$XDG_CONFIG_HOME/callscribe/config"
+run "$CS" transcribe "$s2"
+assert_exit 0 "transcribe with config file exits 0"
+if [ -d "$tmp/wrong" ] && [ -n "$(ls -A "$tmp/wrong" 2>/dev/null)" ]; then
+	fail "config file overrode the exported CALLSCRIBE_OUT_DIR"
+else
+	printf 'ok: environment beats config file\n'
+fi
+rm -f "$XDG_CONFIG_HOME/callscribe/config"
+
+# Extra whisper flags reach the whisper invocation, word-split.
+run env CALLSCRIBE_WHISPER_FLAGS="-tt 8" "$CS" transcribe "$s2"
+assert_exit 0 "transcribe with extra whisper flags exits 0"
+grep -q 'whisper-cli .*-tt 8 ' "$STUB_LOG" && printf 'ok: whisper flags passed through\n' || fail "CALLSCRIBE_WHISPER_FLAGS not passed to whisper"
+
 finish

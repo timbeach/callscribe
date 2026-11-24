@@ -22,8 +22,15 @@ printf 'audio-bytes' >"$fin/mic.wav"
 printf 'audio-bytes' >"$fin/sys.wav"
 printf 'SESSION=x\n' >"$fin/meta"
 printf '{}' >"$fin/mic.json"
+printf 'done\n' >"$fin/done"
 printf 'audio-bytes' >"$act/mic.wav"
 printf '20260101-110000\n' >"$CALLSCRIBE_STATE_DIR/current"
+
+# A session that never produced a transcript must keep its audio.
+unp="$CALLSCRIBE_STATE_DIR/sessions/20260101-090000"
+mkdir -p "$unp"
+printf 'audio-bytes' >"$unp/mic.wav"
+printf 'SESSION=y\n' >"$unp/meta"
 
 run "$CS" clean
 assert_exit 0 "clean exits 0"
@@ -31,6 +38,7 @@ assert_contains "reclaimed" "clean reports reclaimed space"
 [ ! -f "$fin/mic.wav" ] && [ ! -f "$fin/sys.wav" ] && printf 'ok: finished session WAVs removed\n' || fail "finished WAVs survived clean"
 [ -f "$fin/meta" ] && [ -f "$fin/mic.json" ] && printf 'ok: meta and JSON kept\n' || fail "clean deleted non-WAV files"
 [ -f "$act/mic.wav" ] && printf 'ok: active session untouched\n' || fail "clean touched the active session"
+[ -f "$unp/mic.wav" ] && printf 'ok: untranscribed session kept its audio\n' || fail "clean deleted audio of an untranscribed session"
 rm -f "$CALLSCRIBE_STATE_DIR/current"
 
 # summarize

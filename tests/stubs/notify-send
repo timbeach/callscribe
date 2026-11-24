@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test stub for notify-send: only logs.
+[ -n "$STUB_LOG" ] && printf 'notify-send %s\n' "$*" >>"$STUB_LOG"
+exit 0

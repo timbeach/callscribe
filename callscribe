@@ -24,16 +24,33 @@ die() {
 	exit 1
 }
 
+# Precedence: environment beats config file beats built-in defaults.
 load_config() {
+	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN STATE_DIR; do
+		eval "callscribe_set_$v=\${CALLSCRIBE_$v+x}"
+		eval "callscribe_val_$v=\${CALLSCRIBE_$v:-}"
+	done
 	cfg="${XDG_CONFIG_HOME:-$HOME/.config}/callscribe/config"
 	# shellcheck disable=SC1090
 	[ -r "$cfg" ] && . "$cfg"
+	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN STATE_DIR; do
+		if eval "[ -n \"\$callscribe_set_$v\" ]"; then
+			eval "CALLSCRIBE_$v=\$callscribe_val_$v"
+		fi
+	done
 	: "${CALLSCRIBE_OUT_DIR:=$HOME/Documents/PERSONAL/meetings}"
 	: "${CALLSCRIBE_MODEL:=$HOME/.local/share/callscribe/models/ggml-small.bin}"
 	: "${CALLSCRIBE_WHISPER_BIN:=whisper-cli}"
+	: "${CALLSCRIBE_WHISPER_FLAGS:=}"
 	: "${CALLSCRIBE_LANG:=en}"
 	: "${CALLSCRIBE_SILENCE_DB:=-50}"
 	: "${CALLSCRIBE_CLAUDE_BIN:=claude}"
+}
+
+# warn_to FILE MESSAGE: print to stderr and record for the transcript.
+warn_to() {
+	printf 'callscribe: %s\n' "$2" >&2
+	printf '%s\n' "$2" >>"$1"
 }
 
 state_dir() {
@@ -66,6 +83,7 @@ merge_bin() {
 # into a Markdown transcript in CALLSCRIBE_OUT_DIR. Prints the output path.
 process_session() {
 	dir=$1
+	command -v ffmpeg >/dev/null 2>&1 || die "ffmpeg not found; install ffmpeg"
 	command -v "$CALLSCRIBE_WHISPER_BIN" >/dev/null 2>&1 ||
 		die "whisper binary '$CALLSCRIBE_WHISPER_BIN' not found; set CALLSCRIBE_WHISPER_BIN or run callscribe setup"
 	[ -f "$CALLSCRIBE_MODEL" ] ||
@@ -73,26 +91,28 @@ process_session() {
 	SESSION='' STARTED_EPOCH=0 ENDED_EPOCH='' MIC_DEV='' SYS_DEV=''
 	# shellcheck disable=SC1090
 	. "$dir/meta"
+	pwarn="$dir/proc-warnings.log"
+	: >"$pwarn"
 	for s in mic sys; do
 		wav="$dir/$s.wav"
 		if [ ! -f "$wav" ]; then
-			printf 'callscribe: warning: %s stream has no audio; transcript will be one-sided\n' "$s" >&2
+			warn_to "$pwarn" "warning: $s stream has no audio; transcript will be one-sided"
 			printf '{"transcription":[]}\n' >"$dir/$s.json"
 			continue
 		fi
 		k16="$dir/$s.16k.wav"
 		if ! ffmpeg -nostdin -loglevel error -y -i "$wav" -ar 16000 -ac 1 "$k16"; then
-			printf 'callscribe: warning: %s stream audio is unreadable; skipping it\n' "$s" >&2
+			warn_to "$pwarn" "warning: $s stream audio is unreadable; skipping it"
 			printf '{"transcription":[]}\n' >"$dir/$s.json"
 			continue
 		fi
 		mean=$(ffmpeg -nostdin -i "$wav" -af volumedetect -f null - 2>&1 |
 			sed -n 's/.*mean_volume: \(-\{0,1\}[0-9.]*\) dB.*/\1/p')
 		if [ -z "$mean" ] || [ "$(awk -v m="$mean" -v t="$CALLSCRIBE_SILENCE_DB" 'BEGIN{print (m < t) ? 1 : 0}')" = 1 ]; then
-			printf 'callscribe: WARNING: %s stream is silent (mean volume %s dB); check your audio routing\n' \
-				"$s" "${mean:-unknown}" >&2
+			warn_to "$pwarn" "WARNING: $s stream is silent (mean volume ${mean:-unknown} dB); check your audio routing"
 		fi
-		"$CALLSCRIBE_WHISPER_BIN" -m "$CALLSCRIBE_MODEL" -l "$CALLSCRIBE_LANG" \
+		# shellcheck disable=SC2086
+		"$CALLSCRIBE_WHISPER_BIN" -m "$CALLSCRIBE_MODEL" -l "$CALLSCRIBE_LANG" $CALLSCRIBE_WHISPER_FLAGS \
 			-f "$k16" -oj -of "$dir/$s" >>"$dir/whisper.log" 2>&1 ||
 			die "whisper failed on $s stream (see $dir/whisper.log)"
 		[ -f "$dir/$s.json" ] || die "whisper produced no JSON for $s stream (see $dir/whisper.log)"
@@ -101,7 +121,13 @@ process_session() {
 	"$(merge_bin)" "$dir/mic.json" "$dir/sys.json" >"$body" || die "transcript merge failed"
 	mkdir -p "$CALLSCRIBE_OUT_DIR" || die "cannot create $CALLSCRIBE_OUT_DIR"
 	end=${ENDED_EPOCH:-$(date +%s)}
-	out="$CALLSCRIBE_OUT_DIR/$(date -d "@$STARTED_EPOCH" +%Y-%m-%d-%H%M)-call.md"
+	base="$CALLSCRIBE_OUT_DIR/$(date -d "@$STARTED_EPOCH" +%Y-%m-%d-%H%M)-call"
+	out="$base.md"
+	n=2
+	while [ -e "$out" ]; do
+		out="$base-$n.md"
+		n=$((n + 1))
+	done
 	{
 		printf -- '---\n'
 		printf 'date: %s\n' "$(date -d "@$STARTED_EPOCH" +%Y-%m-%d)"
@@ -109,9 +135,17 @@ process_session() {
 		printf 'duration_seconds: %s\n' "$((end - STARTED_EPOCH))"
 		printf 'mic_device: %s\n' "$MIC_DEV"
 		printf 'sys_device: %s\n' "$SYS_DEV"
+		if [ -s "$dir/warnings.log" ] || [ -s "$pwarn" ]; then
+			printf 'warnings:\n'
+			cat "$dir/warnings.log" "$pwarn" 2>/dev/null | while IFS= read -r w; do
+				printf '  - "%s"\n' "$w"
+			done
+		fi
 		printf -- '---\n\n'
 		cat "$body"
 	} >"$out"
+	printf '%s\n' "$out" >"$dir/done"
+	PROCESS_OUT=$out
 	printf '%s\n' "$out"
 }
 
@@ -144,25 +178,47 @@ cmd_start() {
 		printf 'MIC_DEV=%s\n' "$mic_dev"
 		printf 'SYS_DEV=%s\n' "$sys_dev"
 	} >"$dir/meta"
-	pw-record --target "$mic_dev" "$dir/mic.wav" >>"$dir/record.log" 2>&1 &
+	# node.dont-fallback makes a missing target fail instead of silently
+	# recording some other device; stream.capture.sink captures the sink's
+	# monitor (a literal "<sink>.monitor" target is a pulse-only name that
+	# WirePlumber does not resolve).
+	pw-record -P node.dont-fallback=true --target "$mic_dev" "$dir/mic.wav" >>"$dir/record.log" 2>&1 &
 	mic_pid=$!
-	pw-record --target "$sys_dev.monitor" "$dir/sys.wav" >>"$dir/record.log" 2>&1 &
+	pw-record -P stream.capture.sink=true -P node.dont-fallback=true --target "$sys_dev" "$dir/sys.wav" >>"$dir/record.log" 2>&1 &
 	sys_pid=$!
+	sleep 0.3
+	for p in "$mic_pid mic" "$sys_pid system"; do
+		set -- $p
+		if ! kill -0 "$1" 2>/dev/null; then
+			kill -TERM "$mic_pid" "$sys_pid" 2>/dev/null
+			die "the $2 recorder exited at launch; see $dir/record.log"
+		fi
+	done
 	{
 		printf 'MIC_PID=%s\n' "$mic_pid"
 		printf 'SYS_PID=%s\n' "$sys_pid"
 	} >"$dir/pids"
 	printf '%s\n' "$session" >"$sd/current"
-	printf 'recording %s\n  you:  %s\n  them: %s.monitor\n' "$session" "$mic_dev" "$sys_dev"
+	printf 'recording %s\n  you:  %s\n  them: %s (monitor)\n' "$session" "$mic_dev" "$sys_dev"
 }
 
-# stop_recorder PID LABEL: terminate a recorder, warning if it already died.
+# stop_recorder PID LABEL DIR: terminate a recorder, but never signal a pid
+# that is empty or no longer a recorder (stale state after a crash/reboot).
 stop_recorder() {
-	if kill -0 "$1" 2>/dev/null; then
+	if [ -z "$1" ]; then
+		warn_to "$3/warnings.log" "warning: $2 recorder has no recorded pid"
+		return
+	fi
+	if [ -r "/proc/$1/cmdline" ] && tr '\0' ' ' <"/proc/$1/cmdline" | grep -q pw-record; then
 		kill -TERM "$1" 2>/dev/null
-		while kill -0 "$1" 2>/dev/null; do sleep 0.1; done
+		i=0
+		while kill -0 "$1" 2>/dev/null && [ "$i" -lt 50 ]; do
+			sleep 0.1
+			i=$((i + 1))
+		done
+		[ "$i" -ge 50 ] && warn_to "$3/warnings.log" "warning: $2 recorder (pid $1) did not exit"
 	else
-		printf 'callscribe: warning: %s recorder was not running at stop\n' "$2" >&2
+		warn_to "$3/warnings.log" "warning: $2 recorder was not running at stop"
 	fi
 }
 
@@ -174,14 +230,18 @@ cmd_stop() {
 	MIC_PID='' SYS_PID=''
 	# shellcheck disable=SC1090
 	[ -f "$dir/pids" ] && . "$dir/pids"
-	stop_recorder "$MIC_PID" mic
-	stop_recorder "$SYS_PID" system
+	: >"$dir/warnings.log"
+	stop_recorder "$MIC_PID" mic "$dir"
+	stop_recorder "$SYS_PID" system "$dir"
 	printf 'ENDED_EPOCH=%s\n' "$(date +%s)" >>"$dir/meta"
 	rm -f "$sd/current"
 	for f in mic sys; do
-		[ -f "$dir/$f.wav" ] || printf 'callscribe: warning: %s stream has no audio file\n' "$f" >&2
+		[ -f "$dir/$f.wav" ] || warn_to "$dir/warnings.log" "warning: $f stream has no audio file"
 	done
 	process_session "$dir"
+	if command -v notify-send >/dev/null 2>&1; then
+		notify-send "callscribe" "transcript ready: ${PROCESS_OUT:-see $CALLSCRIBE_OUT_DIR}" 2>/dev/null || true
+	fi
 }
 
 cmd_toggle() {
@@ -201,6 +261,8 @@ cmd_clean() {
 	for d in "$sd/sessions"/*/; do
 		[ -d "$d" ] || continue
 		[ -n "$cur" ] && [ "$(basename "$d")" = "$cur" ] && continue
+		# Only sessions with a finished transcript lose their audio.
+		[ -f "${d}done" ] || continue
 		for w in "$d"*.wav; do
 			[ -f "$w" ] || continue
 			total=$((total + $(wc -c <"$w")))

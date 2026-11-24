@@ -18,7 +18,16 @@ export PATH
 run "$CS" start
 assert_exit 0 "start exits 0"
 assert_contains "fake.mic" "start prints the mic device"
-assert_contains "fake.sink.monitor" "start prints the monitor target"
+assert_contains "fake.sink (monitor)" "start prints the monitor target"
+grep -q 'pw-record .*stream\.capture\.sink=true.*--target fake\.sink .*sys\.wav' "$STUB_LOG" &&
+	printf 'ok: sys capture targets the sink with stream.capture.sink\n' ||
+	fail "sys pw-record not invoked with stream.capture.sink=true against the sink"
+grep -q 'pw-record .*node\.dont-fallback=true.*--target fake\.mic .*mic\.wav' "$STUB_LOG" &&
+	printf 'ok: mic capture refuses fallback targets\n' ||
+	fail "mic pw-record not invoked with node.dont-fallback=true"
+grep -q 'pw-record .*fake\.sink\.monitor' "$STUB_LOG" &&
+	fail "sys pw-record still targets the fake pulse .monitor name" ||
+	printf 'ok: no .monitor pseudo-target used\n'
 
 session=$(cat "$CALLSCRIBE_STATE_DIR/current" 2>/dev/null)
 dir="$CALLSCRIBE_STATE_DIR/sessions/$session"
@@ -49,6 +58,7 @@ grep -q '^ENDED_EPOCH=' "$dir/meta" && printf 'ok: meta has ENDED_EPOCH\n' || fa
 kill -0 "$MIC_PID" 2>/dev/null && fail "mic recorder survived stop" || printf 'ok: mic recorder gone\n'
 kill -0 "$SYS_PID" 2>/dev/null && fail "system recorder survived stop" || printf 'ok: system recorder gone\n'
 assert_contains -call.md "stop ran processing and reported a transcript path"
+grep -q '^notify-send ' "$STUB_LOG" && printf 'ok: stop sent a desktop notification\n' || fail "stop sent no desktop notification"
 
 run "$CS" stop
 assert_exit 1 "stop with no session exits 1"
@@ -66,8 +76,33 @@ while kill -0 "$SYS_PID" 2>/dev/null; do sleep 0.1; done
 run "$CS" stop
 assert_exit 0 "stop after a dead recorder exits 0"
 assert_contains "system recorder" "stop warns about the dead system recorder"
-assert_contains -call.md "degraded stop still reports a transcript path"
+assert_contains -call "degraded stop still reports a transcript path"
 [ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: current removed after degraded stop\n' || fail "current still present after degraded stop"
+
+# A recorder that dies at launch must not report success.
+sleep 1
+run env STUB_PWRECORD_FAIL=1 "$CS" start
+assert_exit 1 "start fails when a recorder dies at launch"
+[ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: no current after failed launch\n' || fail "failed launch left a current file"
+
+# Stale state: a reused PID that is not a recorder must not be signalled.
+sleep 60 &
+bystander=$!
+fake=99990101-000000
+fdir="$CALLSCRIBE_STATE_DIR/sessions/$fake"
+mkdir -p "$fdir"
+printf 'SESSION=%s\nSTARTED_EPOCH=%s\nMIC_DEV=fake.mic\nSYS_DEV=fake.sink\n' "$fake" "$(date +%s)" >"$fdir/meta"
+printf 'MIC_PID=%s\nSYS_PID=\n' "$bystander" >"$fdir/pids"
+printf '%s\n' "$fake" >"$CALLSCRIBE_STATE_DIR/current"
+run "$CS" stop
+assert_exit 0 "stop survives stale pids"
+if kill -0 "$bystander" 2>/dev/null; then
+	printf 'ok: bystander process not killed\n'
+else
+	fail "stop killed an unrelated process via a stale pid"
+fi
+kill "$bystander" 2>/dev/null
+assert_contains "mic recorder" "stop warns about the stale mic recorder"
 
 # toggle: starts when idle, stops when recording.
 sleep 1
