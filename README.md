@@ -76,10 +76,31 @@ Raw audio and working files live under `~/.local/state/callscribe/sessions/`
 until you run `callscribe clean`, so a call can be re-transcribed with a
 bigger model at any time.
 
-## dwm and dwmblocks
+## GUI and the Aegix top bar
 
-See `contrib/` for a keybinding snippet (one key toggles recording) and a
-dwmblocks module that shows a recording indicator.
+`callscribe-gui` is a small floating window (tkinter, Python stdlib, no
+venv; needs the distro `tk` package) built for the rushed moment: a state
+dot, a big timer, a "both streams linked" check, START/STOP with the
+inactive one dimmed, device pickers for you/them (saved to the config the
+moment you change them, locked while recording), and a recent-transcripts
+list with open, summarize, and re-run-with-medium actions.
+
+`sb-callscribe` is the matching dwmblocks block: a quiet glyph when idle,
+a red marker with elapsed time while recording. Left-click opens the
+window, right-click toggles recording without opening anything.
+
+Wiring it into the bar (both need sudo rebuilds):
+
+1. Add the line from `contrib/blocks.h.snippet` to your dwmblocks
+   `config.h` (signal 12, interval 10), rebuild dwmblocks.
+2. Add the rule from `contrib/dwm-rule.snippet` to your dwm `config.h` so
+   the window floats, rebuild dwm.
+3. Optional keyboard path: `contrib/dwm-keybind.diff.example` binds one
+   key to toggle plus bar refresh.
+
+## dwm keybinding
+
+See `contrib/dwm-keybind.diff.example` for a one-key toggle.
 
 ## Benchmarks
 

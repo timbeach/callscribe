@@ -3,7 +3,7 @@
 # Add near the other command definitions in config.h:
 #
 #   static const char *callscribecmd[] = { "/bin/sh", "-c",
-#       "callscribe toggle; pkill -RTMIN+10 dwmblocks", NULL };
+#       "callscribe toggle; pkill -RTMIN+12 dwmblocks", NULL };
 #
 # Add to the keys[] array (Mod+Shift+r here; pick any free chord):
 #
@@ -13,6 +13,6 @@
 #
 #   cd ~/.local/src/dwm && sudo make clean install
 #
-# The pkill refreshes the dwmblocks indicator at once; drop it if you do
-# not use the dwmblocks module, and match the RTMIN number to the one in
-# your dwmblocks config.h block.
+# The pkill refreshes the sb-callscribe bar block at once; drop it if you
+# do not use the block, and match the RTMIN number to the one in your
+# dwmblocks config.h block (12 in contrib/blocks.h.snippet).
