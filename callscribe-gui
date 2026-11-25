@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""callscribe-gui: floating control window for callscribe.
+
+Core logic lives in plain functions below so tests can run headless;
+Tk is touched only inside main().
+"""
+
+import os
+import re
+import sys
+
+
+def parse_devices(text):
+    """Parse `callscribe devices` output into dicts with kind/name/desc/flags."""
+    devices = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        kind, name, desc, flags = parts[0], parts[1], parts[2], parts[3]
+        devices.append({
+            "kind": kind,
+            "name": name,
+            "desc": desc,
+            "flags": {f for f in flags.split(",") if f},
+        })
+    return devices
+
+
+def parse_env(text):
+    """Parse `callscribe env` output; keys lose their CALLSCRIBE_ prefix."""
+    env = {}
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.startswith("CALLSCRIBE_"):
+            env[key[len("CALLSCRIBE_"):]] = value
+    return env
+
+
+def parse_status(text):
+    """Parse `callscribe status` output into (state, session, elapsed_seconds)."""
+    first = text.splitlines()[0].strip() if text.strip() else ""
+    if first == "idle":
+        return ("idle", None, None)
+    m = re.match(r"^recording (\S+) (\d+)s$", first)
+    if m:
+        return ("recording", m.group(1), int(m.group(2)))
+    return ("unknown", None, None)
+
+
+def parse_links(pw_link_text, mic_dev, sys_dev):
+    """Whether pw-record streams are linked to mic capture and sink monitor ports."""
+    mic_linked = sys_linked = False
+    lines = pw_link_text.splitlines()
+    for i, line in enumerate(lines):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if "pw-record" not in nxt:
+            continue
+        if line.startswith(f"{mic_dev}:capture"):
+            mic_linked = True
+        if line.startswith(f"{sys_dev}:monitor"):
+            sys_linked = True
+    return (mic_linked, sys_linked)
+
+
+def read_frontmatter(path):
+    """Plain key: value pairs between --- fences; {} when absent or unreadable."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return {}
+    if not lines or lines[0].strip() != "---":
+        return {}
+    fm = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return fm
+        key, sep, value = line.partition(": ")
+        if sep and " " not in key:
+            fm[key] = value.strip()
+    return {}
+
+
+def list_transcripts(out_dir, sessions_dir):
+    """Newest-first transcript rows with provenance and rerunnability."""
+    try:
+        names = os.listdir(out_dir)
+    except OSError:
+        return []
+    rows = []
+    for name in names:
+        if "-call" not in name or not name.endswith(".md") or name.endswith(".summary.md"):
+            continue
+        path = os.path.join(out_dir, name)
+        fm = read_frontmatter(path)
+        session = fm.get("session")
+        try:
+            duration = int(fm.get("duration_seconds", ""))
+        except ValueError:
+            duration = None
+        rerunnable = False
+        if session:
+            sdir = os.path.join(sessions_dir, session)
+            rerunnable = any(
+                os.path.isfile(os.path.join(sdir, w)) for w in ("mic.wav", "sys.wav")
+            )
+        rows.append({
+            "path": path,
+            "date": fm.get("date"),
+            "start": fm.get("start"),
+            "duration_seconds": duration,
+            "session": session,
+            "model": fm.get("model"),
+            "rerunnable": rerunnable,
+            "mtime": os.path.getmtime(path),
+        })
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return rows
+
+
+def set_config_values(path, values):
+    """Set KEY='value' lines in the sh config, leaving every other line alone."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines(keepends=True)
+    except OSError:
+        lines = []
+    pending = dict(values)
+    out = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip()
+        if key in pending:
+            value = pending.pop(key)
+            out.append("{}='{}'\n".format(key, value.replace("'", "'\\''")))
+        else:
+            out.append(line)
+    for key, value in pending.items():
+        out.append("{}='{}'\n".format(key, value.replace("'", "'\\''")))
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(out)
+
+
+def medium_model_path(model_path):
+    """The medium model expected beside the configured model."""
+    return os.path.join(os.path.dirname(model_path), "ggml-medium.bin")
+
+
+def main():
+    raise SystemExit("callscribe-gui: Tk layer not yet implemented")
+
+
+if __name__ == "__main__":
+    main()
