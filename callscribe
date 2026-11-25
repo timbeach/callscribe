@@ -137,6 +137,8 @@ process_session() {
 		printf 'duration_seconds: %s\n' "$((end - STARTED_EPOCH))"
 		printf 'mic_device: %s\n' "$MIC_DEV"
 		printf 'sys_device: %s\n' "$SYS_DEV"
+		printf 'session: %s\n' "$SESSION"
+		printf 'model: %s\n' "$(basename "$CALLSCRIBE_MODEL")"
 		if [ -s "$dir/warnings.log" ] || [ -s "$pwarn" ]; then
 			printf 'warnings:\n'
 			cat "$dir/warnings.log" "$pwarn" 2>/dev/null | while IFS= read -r w; do

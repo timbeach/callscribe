@@ -43,6 +43,8 @@ fi
 grep -q '^mic_device: fake.mic$' "$md" && printf 'ok: frontmatter mic device\n' || fail "frontmatter lacks mic_device"
 grep -q '^sys_device: fake.sink$' "$md" && printf 'ok: frontmatter sys device\n' || fail "frontmatter lacks sys_device"
 grep -q '^duration_seconds: 120$' "$md" && printf 'ok: frontmatter duration\n' || fail "frontmatter lacks duration"
+grep -q "^session: $s1\$" "$md" && printf 'ok: frontmatter session id\n' || fail "frontmatter lacks session id"
+grep -q '^model: model.bin$' "$md" && printf 'ok: frontmatter model\n' || fail "frontmatter lacks model"
 grep -q '\*\*\[0:00:01\] You:\*\* canned you line' "$md" && printf 'ok: body has You line\n' || fail "body lacks You line"
 
 run env CALLSCRIBE_WHISPER_BIN=definitely-absent-whisper "$CS" transcribe "$s1"
