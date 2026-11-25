@@ -1,11 +1,14 @@
 """Headless tests for callscribe-gui's core logic (no Tk, no X)."""
 
 import os
+import sys
 import tempfile
 import textwrap
 import time
 import unittest
 from importlib.machinery import SourceFileLoader
+
+sys.dont_write_bytecode = True
 
 GUI_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "callscribe-gui")
 gui = SourceFileLoader("callscribe_gui", GUI_PATH).load_module()
@@ -26,6 +29,17 @@ PW_LINK_TEXT = textwrap.dedent("""\
       |-> pw-record:input_FL
     unrelated.sink:monitor_FL
       |-> some-app:input_FL
+""")
+
+# During a call the mic port carries the call app's link first and
+# pw-record only second; the sink monitor may list several consumers too.
+PW_LINK_BUSY_TEXT = textwrap.dedent("""\
+    my.mic:capture_FL
+      |-> firefox:input_FL
+      |-> pw-record:input_FL
+    my.sink:monitor_FL
+      |-> some-app:input_FL
+      |-> pw-record:input_FL
 """)
 
 
@@ -76,6 +90,9 @@ class ParseTest(unittest.TestCase):
 
     def test_parse_links_missing(self):
         self.assertEqual(gui.parse_links(PW_LINK_TEXT, "absent.mic", "unrelated.sink"), (False, False))
+
+    def test_parse_links_second_consumer_counts(self):
+        self.assertEqual(gui.parse_links(PW_LINK_BUSY_TEXT, "my.mic", "my.sink"), (True, True))
 
 
 class FrontmatterTest(unittest.TestCase):
@@ -141,6 +158,12 @@ class ListTranscriptsTest(unittest.TestCase):
         self.assertIsNone(rows[0]["session"])
         self.assertFalse(rows[0]["rerunnable"])
 
+    def test_vanished_file_skipped(self):
+        write(os.path.join(self.out, "2026-01-01-1200-call.md"), transcript(session="s9"))
+        os.symlink("/nonexistent/target", os.path.join(self.out, "2026-01-02-1200-call.md"))
+        rows = gui.list_transcripts(self.out, self.sessions)
+        self.assertEqual(len(rows), 1)
+
     def test_cleaned_session_not_rerunnable(self):
         write(os.path.join(self.out, "2026-01-01-1200-call.md"), transcript(session="s3"))
         self.mksession("s3", with_wav=False)
@@ -163,12 +186,40 @@ class ConfigTest(unittest.TestCase):
             self.assertIn("CALLSCRIBE_SYS_DEV='new.sink'\n", result)
             self.assertNotIn("old.mic", result)
 
+    def test_no_trailing_newline_not_corrupted(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "config")
+            write(p, "CALLSCRIBE_OUT_DIR='/keep'")
+            gui.set_config_values(p, {"CALLSCRIBE_MIC_DEV": "m"})
+            with open(p) as f:
+                result = f.read()
+            self.assertIn("CALLSCRIBE_OUT_DIR='/keep'\n", result)
+            self.assertIn("CALLSCRIBE_MIC_DEV='m'\n", result)
+
     def test_creates_file_and_parent(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "sub", "config")
             gui.set_config_values(p, {"CALLSCRIBE_MIC_DEV": "m"})
             with open(p) as f:
                 self.assertIn("CALLSCRIBE_MIC_DEV='m'\n", f.read())
+
+
+class InstanceTest(unittest.TestCase):
+    def test_missing_pidfile(self):
+        self.assertFalse(gui.other_instance_running("/nonexistent/gui.pid"))
+
+    def test_garbage_pidfile(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "gui.pid")
+            write(p, "not a pid")
+            self.assertFalse(gui.other_instance_running(p))
+
+    def test_reused_pid_is_not_an_instance(self):
+        # Our own pid is alive but its cmdline is not callscribe-gui.
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "gui.pid")
+            write(p, str(os.getpid()))
+            self.assertFalse(gui.other_instance_running(p))
 
 
 class MediumPathTest(unittest.TestCase):

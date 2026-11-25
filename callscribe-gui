@@ -53,17 +53,21 @@ def parse_status(text):
 
 
 def parse_links(pw_link_text, mic_dev, sys_dev):
-    """Whether pw-record streams are linked to mic capture and sink monitor ports."""
+    """Whether pw-record streams are linked to mic capture and sink monitor ports.
+
+    A port's consumers are the indented |-> lines under it, and pw-record may
+    be any of them (the call app is usually linked first).
+    """
     mic_linked = sys_linked = False
-    lines = pw_link_text.splitlines()
-    for i, line in enumerate(lines):
-        nxt = lines[i + 1] if i + 1 < len(lines) else ""
-        if "pw-record" not in nxt:
-            continue
-        if line.startswith(f"{mic_dev}:capture"):
-            mic_linked = True
-        if line.startswith(f"{sys_dev}:monitor"):
-            sys_linked = True
+    port = ""
+    for line in pw_link_text.splitlines():
+        if line and not line[0].isspace():
+            port = line
+        elif "|->" in line and "pw-record" in line:
+            if port.startswith(f"{mic_dev}:capture"):
+                mic_linked = True
+            if port.startswith(f"{sys_dev}:monitor"):
+                sys_linked = True
     return (mic_linked, sys_linked)
 
 
@@ -109,6 +113,10 @@ def list_transcripts(out_dir, sessions_dir):
             rerunnable = any(
                 os.path.isfile(os.path.join(sdir, w)) for w in ("mic.wav", "sys.wav")
             )
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
         rows.append({
             "path": path,
             "date": fm.get("date"),
@@ -117,7 +125,7 @@ def list_transcripts(out_dir, sessions_dir):
             "session": session,
             "model": fm.get("model"),
             "rerunnable": rerunnable,
-            "mtime": os.path.getmtime(path),
+            "mtime": mtime,
         })
     rows.sort(key=lambda r: r["mtime"], reverse=True)
     return rows
@@ -139,6 +147,8 @@ def set_config_values(path, values):
             out.append("{}='{}'\n".format(key, value.replace("'", "'\\''")))
         else:
             out.append(line)
+    if out and not out[-1].endswith("\n"):
+        out[-1] += "\n"
     for key, value in pending.items():
         out.append("{}='{}'\n".format(key, value.replace("'", "'\\''")))
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -149,6 +159,17 @@ def set_config_values(path, values):
 def medium_model_path(model_path):
     """The medium model expected beside the configured model."""
     return os.path.join(os.path.dirname(model_path), "ggml-medium.bin")
+
+
+def other_instance_running(pidfile):
+    """True only when the pidfile names a live process that is callscribe-gui."""
+    try:
+        with open(pidfile) as f:
+            pid = int(f.read().strip())
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return b"callscribe-gui" in f.read()
+    except (OSError, ValueError):
+        return False
 
 
 def run_cli(*args, env_extra=None):
@@ -212,14 +233,12 @@ def main():
 
     # Single instance.
     pidfile = os.path.join(state_dir, "gui.pid")
-    try:
-        with open(pidfile) as f:
-            old = int(f.read().strip())
-        os.kill(old, 0)
-        subprocess.run(["wmctrl", "-x", "-a", "callscribe"], capture_output=True)
+    if other_instance_running(pidfile):
+        try:
+            subprocess.run(["wmctrl", "-x", "-a", "callscribe"], capture_output=True)
+        except OSError:
+            pass  # wmctrl is optional; the existing window just is not fronted
         return
-    except (OSError, ValueError):
-        pass
     os.makedirs(state_dir, exist_ok=True)
     with open(pidfile, "w") as f:
         f.write(str(os.getpid()))
@@ -256,6 +275,12 @@ def main():
     except tk.TclError:
         pass
     style.configure("TCombobox", fieldbackground="#1a212b", background="#1a212b", foreground=C_FG)
+    # clam maps its own readonly colors over configure(); map them back.
+    style.map("TCombobox",
+              fieldbackground=[("readonly", "#1a212b"), ("disabled", "#161b22")],
+              foreground=[("readonly", C_FG), ("disabled", C_MUT)],
+              selectbackground=[("readonly", "#1a212b")],
+              selectforeground=[("readonly", C_FG)])
 
     def refresh_devices():
         _, dout, _ = run_cli("devices")
@@ -302,7 +327,9 @@ def main():
     btn_frame.pack(fill="x", pady=6)
 
     def worker(kind, func):
-        app["busy"] = True
+        # Only a stop gates the buttons; summarize and re-run run alongside.
+        if kind == "stop":
+            app["busy"] = True
         set_buttons()
 
         def go():
@@ -321,11 +348,23 @@ def main():
         app["links_checked"] = None
         refresh_state()
 
+    def stop_call():
+        # File-backed output and its own session: the stop survives this
+        # window closing mid-whisper (a pipe would SIGPIPE callscribe).
+        outf = os.path.join(state_dir, "gui-stop.out")
+        errf = os.path.join(state_dir, "gui-stop.err")
+        with open(outf, "w") as o, open(errf, "w") as e:
+            code = subprocess.run(["callscribe", "stop"], stdout=o, stderr=e,
+                                  start_new_session=True).returncode
+        with open(outf) as o, open(errf) as e:
+            return (code, o.read(), e.read())
+
     def do_stop():
         app["state"] = "processing"
         set_buttons()
         state_line.config(text="● processing...", fg=C_WARN)
-        worker("stop", lambda: run_cli("stop"))
+        root.title("callscribe · processing")
+        worker("stop", stop_call)
 
     start_btn = tk.Button(btn_frame, text="● START", font=("monospace", 13, "bold"),
                           bg=C_BTN_START, fg=C_OK, activebackground=C_BTN_START,
@@ -415,45 +454,58 @@ def main():
         app["links_checked"] = session
 
     def refresh_state():
+        if app["state"] == "processing" or app["busy"]:
+            return  # a stop owns the state line until its worker reports
         _, sout, _ = run_cli("status")
         state, session, elapsed = parse_status(sout)
-        if app["state"] == "processing" and state in ("idle", "unknown"):
-            return  # worker will clear it
         if state == "recording":
             app["state"], app["session"] = "recording", session
+            root.title("callscribe · recording")
             state_line.config(text="● recording", fg=C_RECFG)
             timer.config(text="%d:%02d" % divmod(elapsed or 0, 60), fg=C_RECFG)
             if app["links_checked"] != session and (elapsed or 0) >= 1:
                 check_links(session)
         elif state == "idle":
             app["state"] = "idle"
+            root.title("callscribe")
             state_line.config(text="● not recording", fg=C_IDLE)
             timer.config(text="--:--", fg=C_IDLE)
         else:
             app["state"] = "idle"
+            root.title("callscribe")
             state_line.config(text="● state unknown (stale session?)", fg=C_WARN)
             timer.config(text="--:--", fg=C_IDLE)
         set_buttons()
+
+    def last_line(text, fallback):
+        lines = text.strip().splitlines()
+        return lines[-1] if lines else fallback
 
     def tick():
         try:
             while True:
                 kind, result = results.get_nowait()
-                app["busy"] = False
                 code, sout, serr = result
                 if kind == "stop":
+                    app["busy"] = False
                     app["state"] = "idle"
                     if code == 0 and sout.strip():
-                        links_line.config(text="saved " + os.path.basename(sout.strip().splitlines()[-1]), fg=C_OK)
+                        links_line.config(text="saved " + os.path.basename(last_line(sout, "")), fg=C_OK)
                     elif code != 0:
-                        links_line.config(text=(serr or "stop failed").strip().splitlines()[-1], fg=C_REC)
+                        links_line.config(text=last_line(serr, "stop failed"), fg=C_REC)
                 elif code != 0:
-                    links_line.config(text=(serr or kind + " failed").strip().splitlines()[-1], fg=C_REC)
+                    links_line.config(text=last_line(serr, kind + " failed"), fg=C_REC)
                 refresh_list()
         except queue.Empty:
             pass
-        refresh_state()
-        root.after(1000, tick)
+        except Exception:
+            pass  # a hiccup must never stop the clock
+        try:
+            refresh_state()
+        except Exception:
+            pass
+        finally:
+            root.after(1000, tick)
 
     refresh_devices()
     refresh_list()

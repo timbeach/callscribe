@@ -2,6 +2,11 @@
  * ~/.local/src/dwm/config.h, then: cd ~/.local/src/dwm && sudo make clean install
  * and restart dwm (Mod+Shift+Q on Aegix).
  *
- *  class          instance      title  tags mask  isfloating  monitor
+ * Tk reports WM_CLASS as instance "callscribe", class "Callscribe"
+ * (capitalized), and dwm matches case-sensitively. This is the Aegix/LARBS
+ * swallow-patched Rule layout; on vanilla dwm drop the isterminal and
+ * noswallow columns.
+ *
+ *  class          instance      title  tags mask  isfloating  isterminal  noswallow  monitor
  */
-	{ "callscribe",  "callscribe", NULL,  0,         1,          -1 },
+	{ "Callscribe",  "callscribe", NULL,  0,         1,          0,          0,         -1 },

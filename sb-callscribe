@@ -4,7 +4,7 @@
 # because stop runs whisper for minutes and must never block the bar.
 case "${BLOCK_BUTTON:-}" in
 1) setsid -f callscribe-gui >/dev/null 2>&1 ;;
-3) setsid -f sh -c 'callscribe toggle >/dev/null 2>&1; pkill -RTMIN+12 dwmblocks' >/dev/null 2>&1 ;;
+3) setsid -f sh -c 'out=$(callscribe toggle 2>&1) || notify-send "callscribe" "$out"; pkill -RTMIN+12 dwmblocks' >/dev/null 2>&1 ;;
 esac
 
 status=$(callscribe status 2>/dev/null)

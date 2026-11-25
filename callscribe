@@ -12,6 +12,8 @@ commands:
   toggle       start if idle, stop if recording
   status       show whether a recording is running
   transcribe   rerun processing on a finished session
+  devices      list audio devices for the GUI (kind, name, description, flags)
+  env          print the effective CALLSCRIBE_* configuration
   setup        install whisper.cpp and download a model
   clean        delete raw audio from finished sessions
   summarize    pipe a transcript into the claude CLI
@@ -263,7 +265,7 @@ cmd_stop() {
 
 # emit_devices KIND PACTL-TYPE SELECTED: print kind<TAB>name<TAB>desc<TAB>flags rows.
 emit_devices() {
-	pactl list "$2" | awk -v kind="$1" -v sel="$3" '
+	LC_ALL=C pactl list "$2" | awk -v kind="$1" -v sel="$3" '
 		/^\tName: / { name = $2 }
 		/^\tDescription: / {
 			desc = $0

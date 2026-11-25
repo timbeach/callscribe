@@ -1,3 +1,4 @@
 .superpowers/
 *.wav
 models/
+__pycache__/
