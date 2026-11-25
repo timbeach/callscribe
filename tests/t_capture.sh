@@ -113,4 +113,31 @@ run "$CS" toggle
 assert_exit 0 "toggle stops when recording"
 [ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: toggle stopped the session\n' || fail "toggle did not stop the session"
 
+# Device overrides: a configured device is used; a missing one dies loudly.
+sleep 1
+run env CALLSCRIBE_MIC_DEV=other.mic "$CS" start
+assert_exit 0 "start with mic override exits 0"
+grep -q 'pw-record --target other\.mic .*mic\.wav' "$STUB_LOG" &&
+	printf 'ok: mic override reaches pw-record\n' || fail "mic override not used as target"
+run "$CS" stop
+assert_exit 0 "stop after mic override exits 0"
+
+sleep 1
+run env CALLSCRIBE_SYS_DEV=other.sink "$CS" start
+assert_exit 0 "start with sink override exits 0"
+grep -q 'pw-record .*stream\.capture\.sink=true.*--target other\.sink .*sys\.wav' "$STUB_LOG" &&
+	printf 'ok: sink override reaches pw-record\n' || fail "sink override not used as target"
+run "$CS" stop
+assert_exit 0 "stop after sink override exits 0"
+
+run env CALLSCRIBE_MIC_DEV=gone.mic "$CS" start
+assert_exit 1 "missing configured mic device exits 1"
+assert_contains "gone.mic" "error names the missing mic device"
+assert_contains "CALLSCRIBE_MIC_DEV" "error names the mic config variable"
+[ ! -f "$CALLSCRIBE_STATE_DIR/current" ] && printf 'ok: no current after missing mic device\n' || fail "missing device left a current file"
+
+run env CALLSCRIBE_SYS_DEV=gone.sink "$CS" start
+assert_exit 1 "missing configured sink device exits 1"
+assert_contains "CALLSCRIBE_SYS_DEV" "error names the sink config variable"
+
 finish

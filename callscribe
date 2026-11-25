@@ -26,14 +26,14 @@ die() {
 
 # Precedence: environment beats config file beats built-in defaults.
 load_config() {
-	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN STATE_DIR; do
+	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN STATE_DIR MIC_DEV SYS_DEV; do
 		eval "callscribe_set_$v=\${CALLSCRIBE_$v+x}"
 		eval "callscribe_val_$v=\${CALLSCRIBE_$v:-}"
 	done
 	cfg="${XDG_CONFIG_HOME:-$HOME/.config}/callscribe/config"
 	# shellcheck disable=SC1090
 	[ -r "$cfg" ] && . "$cfg"
-	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN STATE_DIR; do
+	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN STATE_DIR MIC_DEV SYS_DEV; do
 		if eval "[ -n \"\$callscribe_set_$v\" ]"; then
 			eval "CALLSCRIBE_$v=\$callscribe_val_$v"
 		fi
@@ -45,6 +45,8 @@ load_config() {
 	: "${CALLSCRIBE_LANG:=en}"
 	: "${CALLSCRIBE_SILENCE_DB:=-50}"
 	: "${CALLSCRIBE_CLAUDE_BIN:=claude}"
+	: "${CALLSCRIBE_MIC_DEV:=}"
+	: "${CALLSCRIBE_SYS_DEV:=}"
 }
 
 # warn_to FILE MESSAGE: print to stderr and record for the transcript.
@@ -163,8 +165,20 @@ cmd_transcribe() {
 cmd_start() {
 	sd=$(state_dir)
 	[ -f "$sd/current" ] && die "already recording session $(cat "$sd/current"); run callscribe stop first"
-	mic_dev=$(pactl get-default-source) || die "cannot read default source: is PipeWire running?"
-	sys_dev=$(pactl get-default-sink) || die "cannot read default sink: is PipeWire running?"
+	if [ -n "$CALLSCRIBE_MIC_DEV" ]; then
+		mic_dev=$CALLSCRIBE_MIC_DEV
+		pactl list short sources | cut -f2 | grep -qx "$mic_dev" ||
+			die "configured mic device '$mic_dev' not found; fix CALLSCRIBE_MIC_DEV or the GUI picker"
+	else
+		mic_dev=$(pactl get-default-source) || die "cannot read default source: is PipeWire running?"
+	fi
+	if [ -n "$CALLSCRIBE_SYS_DEV" ]; then
+		sys_dev=$CALLSCRIBE_SYS_DEV
+		pactl list short sinks | cut -f2 | grep -qx "$sys_dev" ||
+			die "configured output device '$sys_dev' not found; fix CALLSCRIBE_SYS_DEV or the GUI picker"
+	else
+		sys_dev=$(pactl get-default-sink) || die "cannot read default sink: is PipeWire running?"
+	fi
 	session=$(date +%Y%m%d-%H%M%S)
 	dir="$sd/sessions/$session"
 	while [ -e "$dir" ]; do

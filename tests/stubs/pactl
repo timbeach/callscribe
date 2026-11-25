@@ -1,8 +1,16 @@
 #!/bin/sh
 # Test stub for pactl: fixed fake device names.
 [ -n "$STUB_LOG" ] && printf 'pactl %s\n' "$*" >>"$STUB_LOG"
-case "$1" in
-get-default-source) echo fake.mic ;;
-get-default-sink) echo fake.sink ;;
+case "$1 $2 ${3:-}" in
+"get-default-source  ") echo fake.mic ;;
+"get-default-sink  ") echo fake.sink ;;
+"list short sources")
+	printf '58\tfake.mic\tPipeWire\ts32le 2ch 48000Hz\tRUNNING\n'
+	printf '59\tother.mic\tPipeWire\ts16le 1ch 48000Hz\tSUSPENDED\n'
+	;;
+"list short sinks")
+	printf '60\tfake.sink\tPipeWire\ts32le 2ch 48000Hz\tRUNNING\n'
+	printf '61\tother.sink\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n'
+	;;
 *) exit 1 ;;
 esac
