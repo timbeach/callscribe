@@ -259,6 +259,36 @@ cmd_stop() {
 	fi
 }
 
+# emit_devices KIND PACTL-TYPE SELECTED: print kind<TAB>name<TAB>desc<TAB>flags rows.
+emit_devices() {
+	pactl list "$2" | awk -v kind="$1" -v sel="$3" '
+		/^\tName: / { name = $2 }
+		/^\tDescription: / {
+			desc = $0
+			sub(/^\tDescription: /, "", desc)
+			flags = (name == sel) ? "selected" : ""
+			printf "%s\t%s\t%s\t%s\n", kind, name, desc, flags
+		}
+	'
+	if ! pactl list short "$2" 2>/dev/null | cut -f2 | grep -qx "$3"; then
+		printf '%s\t%s\t(missing)\tselected,missing\n' "$1" "$3"
+	fi
+}
+
+cmd_devices() {
+	sel_mic=${CALLSCRIBE_MIC_DEV:-$(pactl get-default-source)} || die "cannot read default source"
+	sel_sys=${CALLSCRIBE_SYS_DEV:-$(pactl get-default-sink)} || die "cannot read default sink"
+	emit_devices source sources "$sel_mic"
+	emit_devices sink sinks "$sel_sys"
+}
+
+cmd_env() {
+	for v in OUT_DIR MODEL WHISPER_BIN WHISPER_FLAGS LANG SILENCE_DB CLAUDE_BIN MIC_DEV SYS_DEV; do
+		eval "printf 'CALLSCRIBE_%s=%s\n' \"$v\" \"\$CALLSCRIBE_$v\""
+	done
+	printf 'CALLSCRIBE_STATE_DIR=%s\n' "$(state_dir)"
+}
+
 cmd_toggle() {
 	sd=$(state_dir)
 	if [ -f "$sd/current" ]; then
@@ -352,6 +382,8 @@ main() {
 	toggle) cmd_toggle "$@" ;;
 	status) cmd_status "$@" ;;
 	transcribe) cmd_transcribe "$@" ;;
+	devices) cmd_devices "$@" ;;
+	env) cmd_env "$@" ;;
 	setup) cmd_setup "$@" ;;
 	clean) cmd_clean "$@" ;;
 	summarize) cmd_summarize "$@" ;;

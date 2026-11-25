@@ -12,5 +12,13 @@ case "$1 $2 ${3:-}" in
 	printf '60\tfake.sink\tPipeWire\ts32le 2ch 48000Hz\tRUNNING\n'
 	printf '61\tother.sink\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n'
 	;;
+"list sources ")
+	printf 'Source #58\n\tName: fake.mic\n\tDescription: Fake Microphone\n'
+	printf 'Source #59\n\tName: other.mic\n\tDescription: Other Microphone\n'
+	;;
+"list sinks ")
+	printf 'Sink #60\n\tName: fake.sink\n\tDescription: Fake Output\n'
+	printf 'Sink #61\n\tName: other.sink\n\tDescription: Other Output\n'
+	;;
 *) exit 1 ;;
 esac
