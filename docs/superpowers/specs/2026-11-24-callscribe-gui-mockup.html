@@ -1,0 +1,74 @@
+<h2>B with device pickers</h2>
+<p class="subtitle">The you/them lines become dropdowns listing live PipeWire devices, editable while idle, locked during recording. Click the variant you prefer for how a changed device should behave.</p>
+
+<style>
+  .cswin { background:#101418; border:1px solid #3a4452; border-radius:6px; font-family:monospace; color:#cdd6e3; padding:14px; max-width:360px; }
+  .cswin .bar { font-size:11px; color:#7d8a9c; margin-bottom:10px; letter-spacing:1px; }
+  .statline { font-size:13px; margin:8px 0 2px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+  .dot.idle { background:#5a6572; }
+  .dot.rec { background:#ff4d52; box-shadow:0 0 6px #ff4d52; }
+  .timer { font-size:30px; text-align:center; letter-spacing:2px; margin:4px 0; }
+  .devrow { display:flex; align-items:center; gap:6px; margin:4px 0; font-size:12px; }
+  .devrow .lbl { color:#7d8a9c; width:42px; }
+  .devsel { flex:1; background:#1a212b; border:1px solid #3a4452; border-radius:4px; color:#cdd6e3; font-size:11px; padding:3px 6px; font-family:monospace; }
+  .devsel.locked { opacity:.45; border-style:dashed; }
+  .star { color:#7d8a9c; font-size:13px; cursor:default; }
+  .star.on { color:#ffd479; }
+  .twin { display:flex; gap:10px; margin-top:10px; }
+  .halfbtn { flex:1; padding:16px 0; text-align:center; font-size:16px; font-weight:bold; border-radius:6px; border:2px solid; }
+  .halfbtn.start { background:#12331b; border-color:#2e7d42; color:#7fe69a; }
+  .halfbtn.stop { background:#3a1416; border-color:#b03a3f; color:#ff8a8d; }
+  .halfbtn.dim { opacity:0.35; }
+  .secondary { border-top:1px solid #2a323d; margin-top:12px; padding-top:8px; font-size:12px; color:#9aa7b8; }
+  .row { display:flex; justify-content:space-between; padding:3px 0; }
+  .minibtn { font-size:11px; border:1px solid #3a4452; border-radius:4px; padding:1px 7px; color:#9aa7b8; margin-left:4px; }
+  .note { font-size:11px; color:#7d8a9c; margin-top:6px; }
+</style>
+
+<div class="section">
+  <div class="split">
+    <div class="cswin">
+      <div class="bar">CALLSCRIBE · idle</div>
+      <div class="statline"><span class="dot idle"></span>not recording</div>
+      <div class="timer" style="color:#5a6572">--:--</div>
+      <div class="devrow"><span class="lbl">you</span><select class="devsel"><option>Volt 176 mic</option><option>Webcam C615 mic</option><option>Built-in mic</option></select><span class="star on">&#9733;</span></div>
+      <div class="devrow"><span class="lbl">them</span><select class="devsel"><option>Volt 176 output</option><option>HDMI output</option><option>Built-in output</option></select><span class="star on">&#9733;</span></div>
+      <div class="twin">
+        <div class="halfbtn start">&#9679; START</div>
+        <div class="halfbtn stop dim">&#9632; STOP</div>
+      </div>
+      <div class="secondary">
+        <div class="row"><span>17:15 call (45s)</span><span><span class="minibtn">open</span><span class="minibtn">summarize</span></span></div>
+      </div>
+    </div>
+    <div class="cswin">
+      <div class="bar">CALLSCRIBE · recording</div>
+      <div class="statline"><span class="dot rec"></span>recording · both streams linked &#10003;</div>
+      <div class="timer" style="color:#ff8a8d">12:41</div>
+      <div class="devrow"><span class="lbl">you</span><select class="devsel locked" disabled><option>Volt 176 mic</option></select></div>
+      <div class="devrow"><span class="lbl">them</span><select class="devsel locked" disabled><option>Volt 176 output</option></select></div>
+      <div class="twin">
+        <div class="halfbtn start dim">&#9679; START</div>
+        <div class="halfbtn stop">&#9632; STOP</div>
+      </div>
+      <div class="note">devices lock while recording (changing mid-call is a v1 limitation)</div>
+    </div>
+  </div>
+</div>
+
+<h3>When you change a device, what should stick?</h3>
+<div class="options">
+  <div class="option" data-choice="per-call" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content"><h3>Per call only</h3><p>The pick applies to the next start, then falls back to the system defaults. Nothing written anywhere.</p></div>
+  </div>
+  <div class="option" data-choice="sticky-star" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content"><h3>Per call, with a star to save (my pick)</h3><p>The pick applies to the next start; clicking the star writes it to the callscribe config as your standing default. Explicit, no surprise persistence.</p></div>
+  </div>
+  <div class="option" data-choice="always-save" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content"><h3>Always saved</h3><p>Any change is written to the config immediately and used until changed again. Simplest mental model, but a one-off exception silently becomes the new normal.</p></div>
+  </div>
+</div>
