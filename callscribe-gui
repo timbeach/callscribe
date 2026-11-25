@@ -151,8 +151,314 @@ def medium_model_path(model_path):
     return os.path.join(os.path.dirname(model_path), "ggml-medium.bin")
 
 
+def run_cli(*args, env_extra=None):
+    """Run a callscribe subcommand, returning (exit_code, stdout, stderr)."""
+    import subprocess
+    env = dict(os.environ)
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.run(["callscribe", *args], capture_output=True, text=True, env=env)
+    return (proc.returncode, proc.stdout, proc.stderr)
+
+
+def read_meta(path):
+    """Session meta file: KEY=VALUE sh assignments."""
+    meta = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                key, sep, value = line.strip().partition("=")
+                if sep:
+                    meta[key] = value
+    except OSError:
+        pass
+    return meta
+
+
+# Palette, from the approved mockup.
+C_BG = "#101418"
+C_FG = "#cdd6e3"
+C_MUT = "#7d8a9c"
+C_IDLE = "#5a6572"
+C_REC = "#ff4d52"
+C_RECFG = "#ff8a8d"
+C_OK = "#7fe69a"
+C_WARN = "#ffd479"
+C_BTN_START = "#12331b"
+C_BTN_STOP = "#3a1416"
+
+
 def main():
-    raise SystemExit("callscribe-gui: Tk layer not yet implemented")
+    try:
+        import tkinter as tk
+        from tkinter import ttk
+    except ImportError:
+        sys.stderr.write("callscribe-gui: tkinter is missing; install the tk package\n")
+        sys.exit(1)
+    import queue
+    import subprocess
+    import threading
+
+    code, out, _ = run_cli("env")
+    if code != 0:
+        sys.stderr.write("callscribe-gui: cannot run callscribe; is it on PATH?\n")
+        sys.exit(1)
+    env = parse_env(out)
+    state_dir = env.get("STATE_DIR", "")
+    config_path = os.path.join(
+        os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+        "callscribe", "config",
+    )
+
+    # Single instance.
+    pidfile = os.path.join(state_dir, "gui.pid")
+    try:
+        with open(pidfile) as f:
+            old = int(f.read().strip())
+        os.kill(old, 0)
+        subprocess.run(["wmctrl", "-x", "-a", "callscribe"], capture_output=True)
+        return
+    except (OSError, ValueError):
+        pass
+    os.makedirs(state_dir, exist_ok=True)
+    with open(pidfile, "w") as f:
+        f.write(str(os.getpid()))
+    import atexit
+    atexit.register(lambda: os.path.exists(pidfile) and os.remove(pidfile))
+
+    root = tk.Tk(className="callscribe")
+    root.title("callscribe")
+    root.configure(bg=C_BG, padx=14, pady=12)
+    mono = ("monospace", 10)
+    results = queue.Queue()
+    app = {"state": "idle", "busy": False, "links_checked": None, "session": None}
+
+    def label(parent, **kw):
+        kw.setdefault("bg", C_BG)
+        kw.setdefault("fg", C_FG)
+        kw.setdefault("font", mono)
+        return tk.Label(parent, **kw)
+
+    state_line = label(root, text="● not recording", fg=C_IDLE, anchor="w")
+    state_line.pack(fill="x")
+    timer = label(root, text="--:--", font=("monospace", 26), fg=C_IDLE)
+    timer.pack(pady=2)
+    links_line = label(root, text="", anchor="w", fg=C_MUT)
+    links_line.pack(fill="x")
+
+    # Device pickers.
+    pickers = {}
+    pick_frame = tk.Frame(root, bg=C_BG)
+    pick_frame.pack(fill="x", pady=4)
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+    style.configure("TCombobox", fieldbackground="#1a212b", background="#1a212b", foreground=C_FG)
+
+    def refresh_devices():
+        _, dout, _ = run_cli("devices")
+        devs = parse_devices(dout)
+        blocked = False
+        for kind, var in (("source", "CALLSCRIBE_MIC_DEV"), ("sink", "CALLSCRIBE_SYS_DEV")):
+            rows = [d for d in devs if d["kind"] == kind]
+            box, warn, name_by_desc = pickers[kind]
+            values = ["(system default)"] + [d["desc"] for d in rows if "missing" not in d["flags"]]
+            name_by_desc.clear()
+            name_by_desc.update({d["desc"]: d["name"] for d in rows})
+            box["values"] = values
+            selected = next((d for d in rows if "selected" in d["flags"]), None)
+            if selected is not None:
+                box.set(selected["desc"])
+            if selected is not None and "missing" in selected["flags"]:
+                warn.config(text="configured device missing: " + selected["name"], fg=C_REC)
+                blocked = True
+            else:
+                warn.config(text="")
+        app["blocked"] = blocked
+        set_buttons()
+
+    def on_pick(kind, var):
+        box, _, name_by_desc = pickers[kind]
+        desc = box.get()
+        name = "" if desc == "(system default)" else name_by_desc.get(desc, "")
+        set_config_values(config_path, {var: name})
+        refresh_devices()
+
+    for kind, lbl, var in (("source", "you", "CALLSCRIBE_MIC_DEV"), ("sink", "them", "CALLSCRIBE_SYS_DEV")):
+        row = tk.Frame(pick_frame, bg=C_BG)
+        row.pack(fill="x", pady=1)
+        label(row, text=lbl, fg=C_MUT, width=5, anchor="w").pack(side="left")
+        box = ttk.Combobox(row, state="readonly", font=mono, width=34)
+        box.pack(side="left", fill="x", expand=True)
+        warn = label(row, text="", fg=C_REC)
+        warn.pack(side="left", padx=4)
+        pickers[kind] = (box, warn, {})
+        box.bind("<<ComboboxSelected>>", lambda _e, k=kind, v=var: on_pick(k, v))
+
+    # START / STOP.
+    btn_frame = tk.Frame(root, bg=C_BG)
+    btn_frame.pack(fill="x", pady=6)
+
+    def worker(kind, func):
+        app["busy"] = True
+        set_buttons()
+
+        def go():
+            try:
+                results.put((kind, func()))
+            except Exception as err:  # surface, never crash the UI thread
+                results.put((kind, (1, "", str(err))))
+        threading.Thread(target=go, daemon=True).start()
+
+    def do_start():
+        if app.get("blocked"):
+            return
+        code, _, serr = run_cli("start")
+        if code != 0:
+            links_line.config(text=serr.strip().splitlines()[-1] if serr else "start failed", fg=C_REC)
+        app["links_checked"] = None
+        refresh_state()
+
+    def do_stop():
+        app["state"] = "processing"
+        set_buttons()
+        state_line.config(text="● processing...", fg=C_WARN)
+        worker("stop", lambda: run_cli("stop"))
+
+    start_btn = tk.Button(btn_frame, text="● START", font=("monospace", 13, "bold"),
+                          bg=C_BTN_START, fg=C_OK, activebackground=C_BTN_START,
+                          activeforeground=C_OK, relief="ridge", command=do_start)
+    start_btn.pack(side="left", expand=True, fill="x", padx=(0, 5), ipady=8)
+    stop_btn = tk.Button(btn_frame, text="■ STOP", font=("monospace", 13, "bold"),
+                         bg=C_BTN_STOP, fg=C_RECFG, activebackground=C_BTN_STOP,
+                         activeforeground=C_RECFG, relief="ridge", command=do_stop)
+    stop_btn.pack(side="left", expand=True, fill="x", ipady=8)
+
+    def set_buttons():
+        recording = app["state"] == "recording"
+        processing = app["state"] == "processing" or app["busy"]
+        start_btn.config(state="disabled" if (recording or processing or app.get("blocked")) else "normal")
+        stop_btn.config(state="normal" if recording and not processing else "disabled")
+        for box, _, _ in pickers.values():
+            box.config(state="disabled" if (recording or processing) else "readonly")
+
+    # Transcript list.
+    list_frame = tk.Frame(root, bg=C_BG)
+    list_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+    def open_file(path):
+        term, editor = os.environ.get("TERMINAL"), os.environ.get("EDITOR")
+        if term and editor:
+            subprocess.Popen([term, "-e", editor, path], start_new_session=True)
+        else:
+            subprocess.Popen(["xdg-open", path], start_new_session=True)
+
+    def do_summarize(path):
+        def go():
+            code, sout, serr = run_cli("summarize", path)
+            if code == 0:
+                spath = path[:-3] + ".summary.md"
+                with open(spath, "w", encoding="utf-8") as f:
+                    f.write(sout)
+                open_file(spath)
+            return (code, sout, serr)
+        worker("summarize", go)
+
+    def do_rerun(session):
+        medium = medium_model_path(env.get("MODEL", ""))
+        worker("rerun", lambda: run_cli("transcribe", session,
+                                        env_extra={"CALLSCRIBE_MODEL": medium}))
+
+    def refresh_list():
+        for child in list_frame.winfo_children():
+            child.destroy()
+        sessions_dir = os.path.join(state_dir, "sessions")
+        medium_ok = os.path.isfile(medium_model_path(env.get("MODEL", "")))
+        rows = list_transcripts(env.get("OUT_DIR", ""), sessions_dir)[:8]
+        if not rows:
+            label(list_frame, text="no transcripts yet", fg=C_MUT).pack(anchor="w")
+        for r in rows:
+            line = tk.Frame(list_frame, bg=C_BG)
+            line.pack(fill="x", pady=1)
+            dur = "" if r["duration_seconds"] is None else " %dm%02ds" % divmod(r["duration_seconds"], 60)
+            model = (r["model"] or "").replace("ggml-", "").replace(".bin", "")
+            text = "%s %s%s %s" % (r["date"] or "?", r["start"] or "", dur, model)
+            label(line, text=text, fg=C_FG, anchor="w").pack(side="left", fill="x", expand=True)
+            mk = dict(font=("monospace", 8), bg="#1a212b", fg=C_MUT, relief="flat",
+                      activebackground="#1a212b", activeforeground=C_FG)
+            tk.Button(line, text="open", command=lambda p=r["path"]: open_file(p), **mk).pack(side="left", padx=1)
+            tk.Button(line, text="summarize", command=lambda p=r["path"]: do_summarize(p), **mk).pack(side="left", padx=1)
+            rb = tk.Button(line, text="re-run medium", **mk)
+            if r["rerunnable"] and medium_ok:
+                rb.config(command=lambda s=r["session"]: do_rerun(s))
+            else:
+                reason = "audio cleaned or unknown session" if not r["rerunnable"] else "run callscribe setup for the medium model"
+                rb.config(state="disabled")
+                rb.bind("<Enter>", lambda _e, t=reason: links_line.config(text=t, fg=C_MUT))
+            rb.pack(side="left", padx=1)
+
+    def check_links(session):
+        sdir = os.path.join(state_dir, "sessions", session)
+        meta = read_meta(os.path.join(sdir, "meta"))
+        try:
+            out_text = subprocess.run(["pw-link", "-l"], capture_output=True, text=True).stdout
+        except OSError:
+            return
+        mic_ok, sys_ok = parse_links(out_text, meta.get("MIC_DEV", ""), meta.get("SYS_DEV", ""))
+        if mic_ok and sys_ok:
+            links_line.config(text="both streams linked ✓", fg=C_OK)
+        else:
+            missing = [n for n, ok in (("you", mic_ok), ("them", sys_ok)) if not ok]
+            links_line.config(text="WARNING: %s stream not linked" % " and ".join(missing), fg=C_REC)
+        app["links_checked"] = session
+
+    def refresh_state():
+        _, sout, _ = run_cli("status")
+        state, session, elapsed = parse_status(sout)
+        if app["state"] == "processing" and state in ("idle", "unknown"):
+            return  # worker will clear it
+        if state == "recording":
+            app["state"], app["session"] = "recording", session
+            state_line.config(text="● recording", fg=C_RECFG)
+            timer.config(text="%d:%02d" % divmod(elapsed or 0, 60), fg=C_RECFG)
+            if app["links_checked"] != session and (elapsed or 0) >= 1:
+                check_links(session)
+        elif state == "idle":
+            app["state"] = "idle"
+            state_line.config(text="● not recording", fg=C_IDLE)
+            timer.config(text="--:--", fg=C_IDLE)
+        else:
+            app["state"] = "idle"
+            state_line.config(text="● state unknown (stale session?)", fg=C_WARN)
+            timer.config(text="--:--", fg=C_IDLE)
+        set_buttons()
+
+    def tick():
+        try:
+            while True:
+                kind, result = results.get_nowait()
+                app["busy"] = False
+                code, sout, serr = result
+                if kind == "stop":
+                    app["state"] = "idle"
+                    if code == 0 and sout.strip():
+                        links_line.config(text="saved " + os.path.basename(sout.strip().splitlines()[-1]), fg=C_OK)
+                    elif code != 0:
+                        links_line.config(text=(serr or "stop failed").strip().splitlines()[-1], fg=C_REC)
+                elif code != 0:
+                    links_line.config(text=(serr or kind + " failed").strip().splitlines()[-1], fg=C_REC)
+                refresh_list()
+        except queue.Empty:
+            pass
+        refresh_state()
+        root.after(1000, tick)
+
+    refresh_devices()
+    refresh_list()
+    tick()
+    root.mainloop()
 
 
 if __name__ == "__main__":

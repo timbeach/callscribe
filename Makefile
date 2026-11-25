@@ -17,6 +17,7 @@ install:
 	mkdir -p $(BINDIR)
 	install -m 755 callscribe $(BINDIR)/callscribe
 	install -m 755 callscribe-merge $(BINDIR)/callscribe-merge
+	install -m 755 callscribe-gui $(BINDIR)/callscribe-gui
 
 uninstall:
-	rm -f $(BINDIR)/callscribe $(BINDIR)/callscribe-merge
+	rm -f $(BINDIR)/callscribe $(BINDIR)/callscribe-merge $(BINDIR)/callscribe-gui
